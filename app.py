@@ -19,19 +19,15 @@ st.set_page_config(
     layout="wide"
 )
 
-# Global sidebar style
+# Sidebar font-size tweak
 st.markdown(
     """
     <style>
-    /* Reduce font size only inside the sidebar */
-    section[data-testid="stSidebar"] * {
-        font-size: 11px !important;
-    }
+    section[data-testid="stSidebar"] * { font-size: 11px !important; }
     </style>
     """,
     unsafe_allow_html=True
 )
-
 
 # -------------------------
 # Helper functions
@@ -107,13 +103,17 @@ def solve_tsp_or_tools(distance_matrix):
         return list(range(n))  # fallback
 
 # -------------------------
-# Load data
+# Load data  (com cache)
 # -------------------------
-df = pd.read_csv(r"data/final_fiscrep_anonimized.csv")
-df["lat_dd"] = df["Latitude"].apply(dms_to_dd)
-df["lon_dd"] = df["Longitude"].apply(dms_to_dd)
+@st.cache_data(show_spinner=False)
+def load_data():
+    df0 = pd.read_csv(r"data/final_fiscrep_anonimized.csv")
+    df0["lat_dd"] = df0["Latitude"].apply(dms_to_dd)
+    df0["lon_dd"] = df0["Longitude"].apply(dms_to_dd)
+    ports0 = pd.read_csv(r"data/stations.csv")
+    return df0, ports0
 
-ports = pd.read_csv(r"data/stations.csv")
+df, ports = load_data()
 
 # -------------------------
 # UI Layout
@@ -126,11 +126,11 @@ st.markdown(
 st.markdown(
     """
     <div style="text-align: center; font-size:16px;">
-    <b>Autores:</b> Ricardo Moura and Mina Norouzirad <br>
-    <b>Email:</b> rp.moura@fct.unl.pt and m.norouzirad@fct.unl.pt <br>
+    <b>Autores:</b> Ricardo Moura e Mina Norouzirad <br>
+    <b>Email:</b> rp.moura@fct.unl.pt • m.norouzirad@fct.unl.pt <br>
     <b>Referência:</b> Baseado em 
     <a href="https://www.nature.com/articles/s41597-024-03088-4" target="_blank">
-    *Nature Scientific Data (2024)*</a>
+    <i>Nature Scientific Data (2024)</i></a>
     </div>
     """,
     unsafe_allow_html=True
@@ -138,16 +138,12 @@ st.markdown(
 
 st.markdown("---")
 st.sidebar.subheader("ℹ️ Sobre as variáveis")
-
-# linha em branco para espaçamento
-st.sidebar.markdown("")
-
 st.sidebar.markdown(
     """
     <div style="font-size:11px; color:gray; line-height:1.3; margin-top:0.5em;">
-    <b>Latitude / Longitude</b>: localização das embarcações (graus decimais).<br>
-    <b>Vessel_Type</b>: tipo de embarcação (arrastão, cargueiro, etc.).<br>
-    <b>LOA</b>: comprimento total da embarcação.<br>
+    <b>Latitude / Longitude</b>: localização (graus decimais).<br>
+    <b>Vessel_Type</b>: tipo de embarcação.<br>
+    <b>LOA</b>: comprimento total.<br>
     <b>Main fishing gear</b>: arte de pesca principal.<br>
     <b>Porto</b>: ponto de partida da fiscalização.<br>
     <b>Raio (MN)</b>: distância máxima a considerar.<br>
@@ -155,27 +151,19 @@ st.sidebar.markdown(
     """,
     unsafe_allow_html=True
 )
-
 st.sidebar.markdown("---")
 st.sidebar.subheader("Filtros")
 
-
 # Filter by Result
-result_filter = st.sidebar.radio(
-    "Resultado da fiscalização:",
-    ["Todos", "Apenas PRESUM"]
-)
+result_filter = st.sidebar.radio("Resultado da fiscalização:", ["Todos", "Apenas PRESUM"])
 if result_filter == "Apenas PRESUM":
-    df = df[df["Result"].str.strip().str.upper() == "PRESUM"]
+    df = df[df["Result"].astype(str).str.strip().str.upper() == "PRESUM"]
 
 # Filter by Vessel Type
 vessel_options = df["Vessel_Type"].dropna().unique().tolist()
 vessel_options.sort()
 selected_vessels = st.sidebar.multiselect("Tipos de embarcação:", vessel_options)
-if selected_vessels:
-    df_filt = df[df["Vessel_Type"].isin(selected_vessels)]
-else:
-    df_filt = df.copy()
+df_filt = df[df["Vessel_Type"].isin(selected_vessels)] if selected_vessels else df.copy()
 
 # Filter by Main Fishing Gear
 gear_options = df_filt["Main fishing gear"].dropna().unique().tolist()
@@ -199,10 +187,7 @@ raio_nm = st.sidebar.slider("Raio (milhas náuticas)", 1, 54, 16, 1)
 
 # Cluster mode
 cluster_mode = st.sidebar.radio("Clusters:", ["Automático (Silhouette)", "Número fixo"])
-if cluster_mode == "Número fixo":
-    n_clusters_fixed = st.sidebar.slider("Número de clusters", 1, 10, 5, 1)
-else:
-    n_clusters_fixed = None
+n_clusters_fixed = st.sidebar.slider("Número de clusters", 1, 10, 5, 1) if cluster_mode == "Número fixo" else None
 
 # -------------------------
 # Main content
@@ -213,12 +198,15 @@ col1.metric("Embarcações filtradas", len(df_filt))
 col2.metric("Porto selecionado", porto_sel)
 col3.metric("Raio (MN)", raio_nm)
 
-# Filter vessels near port
-distances = [
-    geodesic((lat, lon), (porto_lat, porto_lon)).nautical
-    for lat, lon in zip(df_filt["lat_dd"], df_filt["lon_dd"])
-]
-mask = np.array(distances) <= raio_nm
+# Filter vessels near port  (robusto a NaN)
+valid_ll = df_filt["lat_dd"].notna() & df_filt["lon_dd"].notna()
+distances = np.full(len(df_filt), np.inf, dtype=float)
+if valid_ll.any():
+    latlon = df_filt.loc[valid_ll, ["lat_dd", "lon_dd"]].to_numpy()
+    distances[valid_ll.values] = [
+        geodesic((lat, lon), (porto_lat, porto_lon)).nautical for lat, lon in latlon
+    ]
+mask = distances <= raio_nm
 df_near = df_filt[mask]
 
 st.subheader(f"🚢 Embarcações próximas ({raio_nm} MN)")
@@ -253,11 +241,7 @@ if st.session_state.get("show_route", False) and not df_near.empty:
         st.warning("Poucas embarcações para formar rota.")
     else:
         # Determine number of clusters
-        n_clusters = (
-            escolher_clusters(coords)
-            if cluster_mode == "Automático (Silhouette)"
-            else n_clusters_fixed
-        )
+        n_clusters = escolher_clusters(coords) if cluster_mode == "Automático (Silhouette)" else n_clusters_fixed
         kmeans = KMeans(n_clusters=n_clusters, random_state=42).fit(coords)
         centers = kmeans.cluster_centers_
 
@@ -279,10 +263,11 @@ if st.session_state.get("show_route", False) and not df_near.empty:
 
         rota_lista = [("Porto", porto_lat, porto_lon, 0)]
         for step, idx in enumerate(route[1:], start=1):
-            if idx == 0:  # skip port again
+            if idx == 0:
                 continue
             lat, lon = points[idx]
-            dist_leg = geodesic((points[route[step-1]][0], points[route[step-1]][1]), (lat, lon)).nautical
+            prev = points[route[step-1]]
+            dist_leg = geodesic((prev[0], prev[1]), (lat, lon)).nautical
             rota_lista.append((f"Zona {step}", lat, lon, round(dist_leg, 1)))
             folium.Marker(
                 [lat, lon],
@@ -298,7 +283,10 @@ if st.session_state.get("show_route", False) and not df_near.empty:
         st.subheader("📍 Lista de pontos a fiscalizar")
         rota_df = pd.DataFrame(rota_lista, columns=["Local", "Latitude", "Longitude", "Distância (NM)"])
         st.dataframe(rota_df, use_container_width=True)
-        
+
+# -------------------------
+# Concluding note (sempre visível)
+# -------------------------
 st.markdown("---")
 st.markdown(
     """
