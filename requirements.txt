@@ -6,4 +6,5 @@ numpy
 scikit-learn
 scipy
 networkx
+geopy
 
