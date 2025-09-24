@@ -282,7 +282,7 @@ if st.session_state.get("show_route", False) and not df_near.empty:
 
         st.subheader("📍 Lista de pontos a fiscalizar")
         rota_df = pd.DataFrame(rota_lista, columns=["Local", "Latitude", "Longitude", "Distância (NM)"])
-        st.dataframe(rota_df, use_container_width=True)
+        st.dataframe(rota_df, width="stretch")
 
 # -------------------------
 # Concluding note (sempre visível)

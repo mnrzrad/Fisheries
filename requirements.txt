@@ -1,4 +1,4 @@
-streamlit
+streamlit==1.50.0
 pandas
 folium==0.16.0
 streamlit-folium==0.20.0
@@ -7,6 +7,4 @@ scikit-learn
 scipy
 networkx
 geopy
-ortools
-re 
-
+ortools==9.9.3963
